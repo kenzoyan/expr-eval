@@ -13,6 +13,22 @@ enum Token {
     RightParen,
 }
 
+// Define error type
+#[derive(Debug)]
+pub enum ExprError {
+    Parse(String),
+}
+
+impl std::error::Error for ExprError {}
+
+impl Display for ExprError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Parse(s) => write!(f, "{}", s),
+        }
+    }
+}
+
 //Associate
 const ASSOC_LEFT: i32 = 0;
 const ASSOC_RIGHT: i32 = 1;
@@ -143,6 +159,102 @@ impl<'a> Iterator for Tokenizer<'a> {
     }
 }
 
+struct Expr<'a> {
+    src: &'a str,
+    iter: Peekable<Tokenizer<'a>>,
+}
+
+impl<'a> Expr<'a> {
+    pub fn new(src: &'a str) -> Self {
+        Self { 
+            src,
+            iter: Tokenizer::new(src).peekable() 
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.iter = Tokenizer::new(self.src).peekable();
+    }
+
+    // Compute expressions, get results
+    pub fn evaluation(&mut self) -> Result<i32, ExprError> {
+        let result = self.compute_expression(1)?;
+
+        if self.iter.peek().is_some() {
+            return Err(ExprError::Parse("Unexpected end of expr".into()));
+        }
+        Ok(result)
+    }
+
+    pub fn compute_expression(&mut self, min_prec: i32) -> Result<i32, ExprError> {
+        // Atom in the left
+        let mut atom_l = self.compute_atom()?;
+
+        loop {
+            let cur_token = self.iter.peek();
+            if cur_token.is_none() {
+                break;
+            }
+            let token = *cur_token.unwrap();
+
+            if !token.is_operator() || token.precedence() < min_prec {
+                break;
+            }
+
+            let mut next_prec = token.precedence();
+            if token.assoc() == ASSOC_LEFT {
+                next_prec += 1;
+            }
+
+            self.iter.next();
+
+            // Atom in the right
+            let atom_r = self.compute_expression(next_prec)?;
+
+            // Compute the value in left and right
+            match token.compute(atom_l, atom_r) {
+                Some(re) => atom_l = re,
+                None => return Err(ExprError::Parse("Unknown expression".into())),
+            }
+        }
+        Ok(atom_l) 
+
+    }
+
+    pub fn compute_atom(&mut self) -> Result<i32, ExprError> {
+        match self.iter.peek() {
+            // Number
+            Some(Token::Number(n)) => {
+                let val = *n;
+                self.iter.next();
+                return Ok(val);
+            }
+            // Left Paren
+            Some(Token::LeftParen) => {
+                self.iter.next();
+                let result = self.compute_expression(1)?;
+                match self.iter.next() {
+                    Some(Token::RightParen) => (),
+                    _ => return Err(ExprError::Parse("Unexpected character".into()))
+                }
+                Ok(result)
+            }
+            _ => return Err(ExprError::Parse("Expecting a number or left paren".into()))
+        }
+    }
+}
+
 fn main() {
     println!("Hello, world!");
+    let src = "83 - 5 + 3 * 10 + (83 - 73) / 5 + 35"; 
+    let mut expr = Expr::new(src);
+    for item in expr.iter.by_ref() {
+        print!("{}", item);
+    }
+    
+    // New line
+    println!("");
+    expr.reset();
+    let result = expr.evaluation();
+    println!("Result = {:?}", result.unwrap());
 }
